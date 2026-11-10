@@ -15,10 +15,10 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-# Модель Gemini (можно заменить на 'openai/gpt-4o-mini' или другую)
+# Модель Gemini
 MODEL_NAME = "google/gemini-2.0-flash-001"
 
-# Словарь для хранения истории сообщений каждого пользователя
+# Память последних сообщений для каждого пользователя
 user_histories = {}
 
 app = Flask(__name__)
@@ -29,7 +29,6 @@ def home():
 
 @bot.message_handler(commands=['clear', 'reset', 'start'])
 def reset_memory(message):
-    """Сброс контекста диалога по команде /clear или /reset"""
     user_id = message.chat.id
     user_histories[user_id] = []
     bot.reply_to(message, "🧹 Память диалога очищена. Начнем с чистого листа!")
@@ -41,14 +40,12 @@ def reply(message):
 
     user_id = message.chat.id
 
-    # Инициализируем историю пользователя, если ее еще нет
     if user_id not in user_histories:
         user_histories[user_id] = []
 
-    # Добавляем сообщение пользователя в память
     user_histories[user_id].append({"role": "user", "content": message.text})
 
-    # Ограничиваем историю последними 10 сообщениями, чтобы не превышать лимиты токенов
+    # Храним последние 10 сообщений контекста
     if len(user_histories[user_id]) > 10:
         user_histories[user_id] = user_histories[user_id][-10:]
 
@@ -57,15 +54,12 @@ def reply(message):
     try:
         bot.send_chat_action(message.chat.id, 'typing')
 
-        # Передаем всю сохраненную цепочку сообщений
         completion = ai_client.chat.completions.create(
             model=MODEL_NAME,
             messages=user_histories[user_id]
         )
         
         answer = completion.choices[0].message.content
-
-        # Сохраняем ответ нейросети в историю
         user_histories[user_id].append({"role": "assistant", "content": answer})
 
         final_text = f"{answer}\n\n---\n🤖 *Модель:* `{MODEL_NAME}`"
@@ -90,4 +84,16 @@ def reply(message):
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("Бот запускается...")
+    
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception as e:
+        print(f"Ошибка сброса вебхука: {e}")
+
+    bot.infinity_polling(skip_pending=True)
