@@ -19,12 +19,15 @@ app = Flask(__name__)
 def home():
     return "Bot is alive!"
 
-def generate_answer(prompt):
-    """Делает запросы к модели и ждет при перегрузке (503)"""
-    delays = [2, 5, 8]  # Паузы между попытками в секундах
-    last_err = None
-
-    for attempt, delay in enumerate(delays, start=1):
+def generate_with_infinite_retry(prompt, status_msg):
+    """
+    Отправляет запрос в Gemini. 
+    При ошибке 503 пересчитывает таймер, редактирует сообщение в Telegram и ждет.
+    """
+    # Список пауз (в секундах) перед каждой повторной попыткой: всего до ~2-3 минут
+    retry_delays = [3, 5, 8, 12, 15, 20, 25, 30, 40]
+    
+    for attempt, delay in enumerate(retry_delays, start=1):
         try:
             response = client.models.generate_content(
                 model=MODEL_NAME,
@@ -33,38 +36,68 @@ def generate_answer(prompt):
             if response.text:
                 return response.text
         except Exception as e:
-            last_err = e
             err_text = str(e)
             
-            # Если сервер временно перегружен (503)
+            # Если сервер перегружен (503 / UNAVAILABLE)
             if "503" in err_text or "UNAVAILABLE" in err_text:
+                try:
+                    # Информируем пользователя о задержке прямо в сообщении
+                    bot.edit_message_text(
+                        chat_id=status_msg.chat.id,
+                        message_id=status_msg.message_id,
+                        text=(
+                            f"⏳ Серверы Google временно перегружены.\n"
+                            f"🔄 Попытка {attempt} из {len(retry_delays)}.\n"
+                            f"⏱ Жду {delay} сек. и пробую снова, не переживайте..."
+                        )
+                    )
+                except Exception:
+                    pass  # Игнорируем мелкие ошибки Telegram при частых edit_message
+                
                 time.sleep(delay)
                 continue
             
-            # При любых других ошибках сразу прекращаем
+            # Если ошибка другая (например, критический сбой API)
             raise e
 
-    raise last_err
+    raise RuntimeError("Серверы были недоступны слишком долго. Пожалуйста, отправьте запрос чуть позже.")
 
 @bot.message_handler(content_types=['text'])
 def reply(message):
     if not message.text:
         return
 
+    # 1. Сразу уведомляем пользователя, что запрос принят
+    status_msg = bot.reply_to(
+        message, 
+        "⚡ Запрос принят! Формирую ответ..."
+    )
+
     try:
+        # Индикатор "печатает..."
         bot.send_chat_action(message.chat.id, 'typing')
-        answer = generate_answer(message.text)
-        bot.reply_to(message, answer)
-    except Exception as e:
-        err_text = str(e)
-        if "503" in err_text or "UNAVAILABLE" in err_text:
-            bot.reply_to(
-                message,
-                "⚠️ Серверы Google Gemini сейчас сильно перегружены (ошибка 503).\n"
-                "Пожалуйста, подождите полминуты и попробуйте отправить сообщение снова."
+        
+        # 2. Ждем ответа столько, сколько потребуется
+        answer = generate_with_infinite_retry(message.text, status_msg)
+        
+        # 3. Заменяем статусное сообщение на готовый ответ
+        # Если ответ очень длинный (> 4096 символов), Telegram не даст отредактировать целиком
+        if len(answer) <= 4000:
+            bot.edit_message_text(
+                chat_id=status_msg.chat.id,
+                message_id=status_msg.message_id,
+                text=answer
             )
         else:
-            bot.reply_to(message, f"Ошибка: {e}")
+            bot.delete_message(status_msg.chat.id, status_msg.message_id)
+            bot.reply_to(message, answer)
+
+    except Exception as e:
+        bot.edit_message_text(
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id,
+            text=f"❌ Произошла ошибка: {e}"
+        )
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -72,5 +105,5 @@ def run_flask():
 
 if __name__ == '__main__':
     threading.Thread(target=run_flask, daemon=True).start()
-    print("Бот запущен...")
+    print("Бот успешно запущен!")
     bot.infinity_polling(skip_pending=True)
