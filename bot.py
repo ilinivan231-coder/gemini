@@ -82,4 +82,5 @@ def handle_model_selection(call):
 @bot.message_handler(commands=['clear', 'reset', 'start'])
 def reset_memory(message):
     user_id = message.chat.id
-    user_histories[user_id] =
+    user_histories[user_id] = []
+    current_slug = user_models.get(user_id, AVAILABLE_MODELS[DEFAULT_
