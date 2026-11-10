@@ -16,7 +16,6 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-# Доступные для выбора модели (Отображаемое имя -> slug на OpenRouter)
 AVAILABLE_MODELS = {
     "gemini_flash": {
         "name": "✨ Gemini 2.5 Flash",
@@ -38,9 +37,8 @@ AVAILABLE_MODELS = {
 
 DEFAULT_MODEL_KEY = "gemini_flash"
 
-# Состояние пользователей
-user_models = {}       # chat_id -> slug модели
-user_histories = {}    # chat_id -> список сообщений
+user_models = {}
+user_histories = {}
 
 app = Flask(__name__)
 
@@ -49,7 +47,6 @@ def home():
     return "Bot is running with model switcher!"
 
 def make_model_keyboard():
-    """Создает кнопки выбора модели"""
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     for key, data in AVAILABLE_MODELS.items():
         button = types.InlineKeyboardButton(text=data["name"], callback_data=f"set_model:{key}")
@@ -58,31 +55,25 @@ def make_model_keyboard():
 
 @bot.message_handler(commands=['model', 'models'])
 def choose_model(message):
-    """Показывает меню выбора модели"""
     current_slug = user_models.get(message.chat.id, AVAILABLE_MODELS[DEFAULT_MODEL_KEY]["slug"])
-    
     bot.reply_to(
         message,
-        f"🤖 **Текущая модель:** `{current_slug}`\n\n"
-        "Выберите модель из списка ниже:",
+        f"🤖 *Текущая модель:* `{current_slug}`\n\nВыберите модель из списка:",
         reply_markup=make_model_keyboard(),
         parse_mode="Markdown"
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("set_model:"))
 def handle_model_selection(call):
-    """Обрабатывает клик по кнопке смены модели"""
     model_key = call.data.split(":")[1]
-    
     if model_key in AVAILABLE_MODELS:
         selected = AVAILABLE_MODELS[model_key]
         user_models[call.message.chat.id] = selected["slug"]
-        
         bot.answer_callback_query(call.id, f"Выбрана модель: {selected['name']}")
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"✅ **Модель успешно изменена!**\n\nТекущая модель: `{selected['slug']}`",
+            text=f"✅ *Модель изменена!*\n\nТекущая: `{selected['slug']}`",
             parse_mode="Markdown"
         )
     else:
@@ -91,8 +82,4 @@ def handle_model_selection(call):
 @bot.message_handler(commands=['clear', 'reset', 'start'])
 def reset_memory(message):
     user_id = message.chat.id
-    user_histories[user_id] = []
-    current_slug = user_models.get(user_id, AVAILABLE_MODELS[DEFAULT_MODEL_KEY]["slug"])
-    bot.reply_to(
-        message, 
-        f"🧹 **Память очищена.**\nАктивная модель: `{current_
+    user_histories[user_id] =
