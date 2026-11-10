@@ -16,26 +16,14 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-AVAILABLE_MODELS = {
-    "gemini_flash": {
-        "name": "✨ Gemini 2.5 Flash",
-        "slug": "google/gemini-2.5-flash"
-    },
-    "gpt_4o_mini": {
-        "name": "🟢 ChatGPT (GPT-4o mini)",
-        "slug": "openai/gpt-4o-mini"
-    },
-    "gemini_free": {
-        "name": "🎁 Gemini Lite (Free)",
-        "slug": "google/gemini-2.0-flash-lite-preview:free"
-    },
-    "llama_free": {
-        "name": "🦙 Llama 3.2 3B (Free)",
-        "slug": "meta-llama/llama-3.2-3b-instruct:free"
-    }
+MODELS = {
+    "1": ("✨ Gemini 2.5 Flash", "google/gemini-2.5-flash"),
+    "2": ("🟢 ChatGPT 4o-mini", "openai/gpt-4o-mini"),
+    "3": ("🎁 Gemini Lite (Free)", "google/gemini-2.0-flash-lite-preview:free"),
+    "4": ("🦙 Llama 3.2 (Free)", "meta-llama/llama-3.2-3b-instruct:free")
 }
 
-DEFAULT_MODEL_KEY = "gemini_flash"
+DEFAULT_MODEL = "google/gemini-2.5-flash"
 
 user_models = {}
 user_histories = {}
@@ -44,43 +32,104 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running with model switcher!"
+    return "Bot is running!"
 
-def make_model_keyboard():
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    for key, data in AVAILABLE_MODELS.items():
-        button = types.InlineKeyboardButton(text=data["name"], callback_data=f"set_model:{key}")
-        keyboard.add(button)
-    return keyboard
+def build_keyboard():
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for key, val in MODELS.items():
+        name, slug = val
+        btn = types.InlineKeyboardButton(text=name, callback_data="m_" + key)
+        kb.add(btn)
+    return kb
 
 @bot.message_handler(commands=['model', 'models'])
-def choose_model(message):
-    current_slug = user_models.get(message.chat.id, AVAILABLE_MODELS[DEFAULT_MODEL_KEY]["slug"])
-    bot.reply_to(
-        message,
-        f"🤖 *Текущая модель:* `{current_slug}`\n\nВыберите модель из списка:",
-        reply_markup=make_model_keyboard(),
-        parse_mode="Markdown"
-    )
+def cmd_model(message):
+    uid = message.chat.id
+    current = user_models.get(uid, DEFAULT_MODEL)
+    text = "🤖 Текущая модель:\n" + current + "\n\nВыберите модель:"
+    bot.reply_to(message, text, reply_markup=build_keyboard())
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("set_model:"))
-def handle_model_selection(call):
-    model_key = call.data.split(":")[1]
-    if model_key in AVAILABLE_MODELS:
-        selected = AVAILABLE_MODELS[model_key]
-        user_models[call.message.chat.id] = selected["slug"]
-        bot.answer_callback_query(call.id, f"Выбрана модель: {selected['name']}")
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("m_"))
+def on_model_click(call):
+    key = call.data.replace("m_", "")
+    if key in MODELS:
+        name, slug = MODELS[key]
+        user_models[call.message.chat.id] = slug
+        bot.answer_callback_query(call.id, "Выбрано: " + name)
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"✅ *Модель изменена!*\n\nТекущая: `{selected['slug']}`",
-            parse_mode="Markdown"
+            text="✅ Активная модель:\n" + slug
         )
-    else:
-        bot.answer_callback_query(call.id, "Неизвестная модель.")
 
 @bot.message_handler(commands=['clear', 'reset', 'start'])
-def reset_memory(message):
-    user_id = message.chat.id
-    user_histories[user_id] = []
-    current_slug = user_models.get(user_id, AVAILABLE_MODELS[DEFAULT_
+def cmd_reset(message):
+    uid = message.chat.id
+    user_histories[uid] = []
+    current = user_models.get(uid, DEFAULT_MODEL)
+    text = "🧹 Память очищена.\nМодель: " + current + "\nСменить модель: /model"
+    bot.reply_to(message, text)
+
+@bot.message_handler(content_types=['text'])
+def on_message(message):
+    if not message.text:
+        return
+
+    uid = message.chat.id
+    model = user_models.get(uid, DEFAULT_MODEL)
+
+    if uid not in user_histories:
+        user_histories[uid] = []
+
+    user_histories[uid].append({"role": "user", "content": message.text})
+
+    if len(user_histories[uid]) > 10:
+        user_histories[uid] = user_histories[uid][-10:]
+
+    status_msg = bot.reply_to(message, "⚡ Запрос обрабатывается (" + model + ")...")
+
+    try:
+        bot.send_chat_action(uid, 'typing')
+
+        resp = ai_client.chat.completions.create(
+            model=model,
+            messages=user_histories[uid]
+        )
+
+        answer = resp.choices[0].message.content
+        user_histories[uid].append({"role": "assistant", "content": answer})
+
+        final_text = answer + "\n\n---\n🤖 Модель: " + model
+
+        if len(final_text) <= 4000:
+            bot.edit_message_text(
+                chat_id=status_msg.chat.id,
+                message_id=status_msg.message_id,
+                text=final_text
+            )
+        else:
+            bot.delete_message(status_msg.chat.id, status_msg.message_id)
+            bot.reply_to(message, final_text)
+
+    except Exception as e:
+        bot.edit_message_text(
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id,
+            text="❌ Ошибка: " + str(e)
+        )
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("Бот запускается...")
+
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception:
+        pass
+
+    bot.infinity_polling(skip_pending=True)
