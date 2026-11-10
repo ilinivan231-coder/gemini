@@ -15,24 +15,34 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-# Актуальный список постоянных бесплатных моделей
-FREE_MODELS = [
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "meta-llama/llama-3.2-1b-instruct:free",
-    "mistralai/mistral-7b-instruct:free"
-]
-
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running via OpenRouter!"
 
+def get_working_free_models():
+    """Автоматически получает список доступных в эту секунду бесплатных моделей"""
+    try:
+        models_data = ai_client.models.list()
+        # Ищем все модели, у которых в названии есть ':free'
+        free_models = [m.id for m in models_data.data if m.id.endswith(':free')]
+        if free_models:
+            return free_models
+    except Exception as e:
+        print(f"Не удалось получить список моделей: {e}")
+    
+    # Запасной список, если запрос к списку упадет
+    return ["meta-llama/llama-3.2-3b-instruct:free", "google/gemini-2.0-flash-lite-preview:free"]
+
 def get_ai_response(text):
-    """Перебирает доступные бесплатные модели, пока не получит ответ"""
+    """Опрашивает реально работающие в данный момент бесплатные модели"""
+    available_models = get_working_free_models()
     last_error = None
-    for model_name in FREE_MODELS:
+
+    for model_name in available_models:
         try:
+            print(f"Пробуем отправить запрос в модель: {model_name}")
             completion = ai_client.chat.completions.create(
                 model=model_name,
                 messages=[
@@ -45,6 +55,7 @@ def get_ai_response(text):
             last_error = e
             print(f"Сбой с моделью {model_name}: {e}")
             continue
+
     raise last_error
 
 @bot.message_handler(content_types=['text'])
@@ -52,7 +63,7 @@ def reply(message):
     if not message.text:
         return
 
-    status_msg = bot.reply_to(message, "⚡ Запрос принят! Формирую ответ...")
+    status_msg = bot.reply_to(message, "⚡ Запрос принят! Подбираю рабочую модель...")
 
     try:
         bot.send_chat_action(message.chat.id, 'typing')
