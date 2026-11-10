@@ -5,14 +5,17 @@ from flask import Flask
 import telebot
 from google import genai
 
-# Токены из переменных окружения Render
 TG_TOKEN = os.environ.get("TG_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 bot = telebot.TeleBot(TG_TOKEN)
 client = genai.Client(api_key=GEMINI_KEY)
 
-MODEL_NAME = 'gemini-3.8-flash'
+# Если Flash перегружен, пробуем Pro-версию
+CANDIDATE_MODELS = [
+    'gemini-3.8-flash',
+    'gemini-3.8-pro'
+]
 
 app = Flask(__name__)
 
@@ -20,23 +23,31 @@ app = Flask(__name__)
 def home():
     return "Bot is alive!"
 
-def generate_with_retry(prompt, max_retries=3):
-    """Отправляет запрос в Gemini. Если сервер перегружен (503), ждет и пробует снова."""
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt
-            )
-            return response.text
-        except Exception as e:
-            err_text = str(e)
-            # При временной перегрузке (503) делаем паузу и пробуем ещё раз
-            if "503" in err_text or "UNAVAILABLE" in err_text:
-                if attempt < max_retries - 1:
-                    time.sleep(3)  # Ждем 3 секунды перед повтором
+def generate_answer(prompt):
+    """Перебирает доступные модели и повторяет запрос при ошибке 503."""
+    last_exception = None
+    
+    for model_name in CANDIDATE_MODELS:
+        # Пробуем отправить запрос к текущей модели с нарастающей паузой
+        for delay in [1, 3]:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response.text:
+                    return response.text
+            except Exception as e:
+                last_exception = e
+                err_text = str(e)
+                # Если перегружен именно сервер (503), ждем и пробуем снова/другую модель
+                if "503" in err_text or "UNAVAILABLE" in err_text:
+                    time.sleep(delay)
                     continue
-            raise e
+                # Если 404 или другая ошибка — сразу идем к следующей модели
+                break
+                
+    raise last_exception
 
 @bot.message_handler(content_types=['text'])
 def reply(message):
@@ -45,24 +56,20 @@ def reply(message):
         
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        answer = generate_with_retry(message.text)
-        
-        if answer:
-            bot.reply_to(message, answer)
-        else:
-            bot.reply_to(message, "Модель вернула пустой ответ.")
-            
+        answer = generate_answer(message.text)
+        bot.reply_to(message, answer)
     except Exception as e:
-        bot.reply_to(message, f"Ошибка: {e}")
+        err_msg = str(e)
+        if "503" in err_msg or "UNAVAILABLE" in err_msg:
+            bot.reply_to(message, "Серверы Google Gemini сейчас испытывают пиковую нагрузку. Пожалуйста, отправьте сообщение повторно через 10–15 секунд.")
+        else:
+            bot.reply_to(message, f"Ошибка: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    # 1. Запуск мини-сервера для Render
     threading.Thread(target=run_flask, daemon=True).start()
-    
-    # 2. Запуск приема сообщений Telegram
-    print("Бот успешно запущен!")
+    print("Бот запущен...")
     bot.infinity_polling(skip_pending=True)
