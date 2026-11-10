@@ -93,7 +93,8 @@ def on_message(message):
 
         resp = ai_client.chat.completions.create(
             model=model,
-            messages=user_histories[uid]
+            messages=user_histories[uid],
+            max_tokens=1500
         )
 
         answer = resp.choices[0].message.content
