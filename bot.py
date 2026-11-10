@@ -1,4 +1,5 @@
 import os
+import time
 import threading
 from flask import Flask
 import telebot
@@ -14,10 +15,11 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-# Список надежных бесплатных моделей OpenRouter по приоритету
+# Актуальный список постоянных бесплатных моделей
 FREE_MODELS = [
-    "google/gemini-2.0-flash-lite-preview:free",
-    "meta-llama/llama-3.3-70b-instruct:free"
+    "meta-llama/llama-3.2-3b-instruct:free",
+    "meta-llama/llama-3.2-1b-instruct:free",
+    "mistralai/mistral-7b-instruct:free"
 ]
 
 app = Flask(__name__)
@@ -27,7 +29,7 @@ def home():
     return "Bot is running via OpenRouter!"
 
 def get_ai_response(text):
-    """Опрашивает бесплатные модели по очереди на случай отключения одной из них"""
+    """Перебирает доступные бесплатные модели, пока не получит ответ"""
     last_error = None
     for model_name in FREE_MODELS:
         try:
@@ -37,10 +39,11 @@ def get_ai_response(text):
                     {"role": "user", "content": text}
                 ]
             )
-            return completion.choices[0].message.content
+            if completion.choices and completion.choices[0].message.content:
+                return completion.choices[0].message.content
         except Exception as e:
             last_error = e
-            print(f"Ошибка с моделью {model_name}: {e}")
+            print(f"Сбой с моделью {model_name}: {e}")
             continue
     raise last_error
 
@@ -78,5 +81,12 @@ def run_flask():
 
 if __name__ == '__main__':
     threading.Thread(target=run_flask, daemon=True).start()
-    print("Бот успешно запущен!")
+    print("Бот запускается...")
+    
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception as e:
+        print(f"Ошибка при сбросе вебхука: {e}")
+
     bot.infinity_polling(skip_pending=True)
