@@ -1,5 +1,4 @@
 import os
-import time
 import threading
 from flask import Flask
 import telebot
@@ -11,46 +10,52 @@ GEMINI_KEY = os.environ.get("GEMINI_KEY")
 bot = telebot.TeleBot(TG_TOKEN)
 client = genai.Client(api_key=GEMINI_KEY)
 
-# Список актуальных моделей для перебора
-MODELS_TO_TRY = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
-]
-
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
-def ask_gemini(text):
-    last_error = None
-    for model_name in MODELS_TO_TRY:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=text
-            )
-            if response.text:
-                return response.text
-        except Exception as e:
-            last_error = e
-            print(f"Ошибка с моделью {model_name}: {e}")
-            # Если временная перегрузка — даем небольшую паузу
-            time.sleep(1)
-            continue
-            
-    # Если ни одна модель не ответила, выводим реальную последнюю ошибку
-    raise RuntimeError(f"Все модели не ответили. Последняя ошибка: {last_error}")
+def get_active_model_name():
+    """Динамически находит первую доступную модель для генерации текста"""
+    try:
+        models = client.models.list()
+        for m in models:
+            # Ищем модель, которая поддерживает генерацию текста
+            actions = getattr(m, 'supported_actions', []) or getattr(m, 'supported_generation_methods', [])
+            if 'generateContent' in actions:
+                # Убираем префикс 'models/', если он есть
+                return m.name.replace('models/', '')
+    except Exception as e:
+        print(f"Не удалось получить список моделей: {e}")
+    # Запасной вариант по умолчанию
+    return 'gemini-2.5-flash'
+
+# Находим рабочую модель один раз при запуске
+ACTIVE_MODEL = get_active_model_name()
+print(f"Используется модель: {ACTIVE_MODEL}")
 
 @bot.message_handler(content_types=['text'])
 def reply(message):
+    global ACTIVE_MODEL
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        answer = ask_gemini(message.text)
-        bot.reply_to(message, answer)
+        
+        response = client.models.generate_content(
+            model=ACTIVE_MODEL,
+            contents=message.text
+        )
+        
+        if response.text:
+            bot.reply_to(message, response.text)
+        else:
+            bot.reply_to(message, "Ответ от модели пуст.")
+            
     except Exception as e:
+        # Если текущая модель выдала сбой, пробуем обновить список
+        err_msg = str(e)
+        if "404" in err_msg:
+            ACTIVE_MODEL = get_active_model_name()
         bot.reply_to(message, f"Ошибка: {e}")
 
 def run_flask():
