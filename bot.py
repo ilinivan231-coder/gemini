@@ -15,10 +15,14 @@ ai_client = OpenAI(
     api_key=OPENROUTER_KEY,
 )
 
-# Модель Gemini
-MODEL_NAME = "google/gemini-2.0-flash-001"
+# Список приоритетных рабочих моделей
+MODELS_TO_TRY = [
+    "google/gemini-2.5-flash",
+    "google/gemini-flash-1.5",
+    "openai/gpt-4o-mini",
+    "google/gemini-2.0-flash-lite-preview:free",
+]
 
-# Память последних сообщений для каждого пользователя
 user_histories = {}
 
 app = Flask(__name__)
@@ -33,6 +37,24 @@ def reset_memory(message):
     user_histories[user_id] = []
     bot.reply_to(message, "🧹 Память диалога очищена. Начнем с чистого листа!")
 
+def request_ai_response(messages):
+    """По очереди пробует модели из списка, пока не получит ответ."""
+    last_error = None
+    for model_name in MODELS_TO_TRY:
+        try:
+            completion = ai_client.chat.completions.create(
+                model=model_name,
+                messages=messages
+            )
+            answer = completion.choices[0].message.content
+            if answer:
+                return answer, model_name
+        except Exception as e:
+            last_error = e
+            print(f"Ошибка с моделью {model_name}: {e}")
+            continue
+    raise last_error
+
 @bot.message_handler(content_types=['text'])
 def reply(message):
     if not message.text:
@@ -45,7 +67,6 @@ def reply(message):
 
     user_histories[user_id].append({"role": "user", "content": message.text})
 
-    # Храним последние 10 сообщений контекста
     if len(user_histories[user_id]) > 10:
         user_histories[user_id] = user_histories[user_id][-10:]
 
@@ -54,15 +75,10 @@ def reply(message):
     try:
         bot.send_chat_action(message.chat.id, 'typing')
 
-        completion = ai_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=user_histories[user_id]
-        )
-        
-        answer = completion.choices[0].message.content
+        answer, used_model = request_ai_response(user_histories[user_id])
         user_histories[user_id].append({"role": "assistant", "content": answer})
 
-        final_text = f"{answer}\n\n---\n🤖 *Модель:* `{MODEL_NAME}`"
+        final_text = f"{answer}\n\n---\n🤖 *Модель:* `{used_model}`"
 
         if len(final_text) <= 4000:
             bot.edit_message_text(
@@ -89,7 +105,7 @@ def run_flask():
 if __name__ == '__main__':
     threading.Thread(target=run_flask, daemon=True).start()
     print("Бот запускается...")
-    
+
     try:
         bot.remove_webhook()
         time.sleep(1)
