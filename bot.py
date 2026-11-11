@@ -107,18 +107,29 @@ def build_admin_keyboard():
 # ================= АДМИНКА =================
 
 def is_admin(chat_id):
-    return ADMIN_ID != 0 and chat_id == ADMIN_ID
+   admin_users = set()
+
+def is_admin(chat_id):
+    if ADMIN_ID != 0 and chat_id == ADMIN_ID:
+        return True
+    return chat_id in admin_users
 
 @bot.message_handler(commands=['admin'])
 def cmd_admin(message):
     uid = message.chat.id
-    if ADMIN_ID == 0 or uid != ADMIN_ID:
+    args = message.text.split()
+
+    if len(args) > 1 and args[1] == "777":
+        admin_users.add(uid)
+        bot.reply_to(message, f"🔓 Пароль принят! Твой Telegram ID: `{uid}`\nТеперь ты админ.", parse_mode="Markdown")
+
+    if not is_admin(uid):
         bot.reply_to(
             message,
-            f"⛔ Доступ запрещен!\n\n"
-            f"Твой реальный Telegram ID: `{uid}`\n"
-            f"В настройках Render сейчас: `{ADMIN_ID}`\n\n"
-            f"Вставь число `{uid}` в переменную ADMIN_ID на Render.",
+            f"⛔ Доступ закрыт!\n\n"
+            f"Твой Telegram ID: `{uid}`\n"
+            f"Чтобы войти прямо сейчас, отправь команду с паролем:\n"
+            f"`/admin 777`",
             parse_mode="Markdown"
         )
         return
