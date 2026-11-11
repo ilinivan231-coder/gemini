@@ -49,13 +49,11 @@ PERSONAS = {
 
 DEFAULT_PERSONA = "default"
 
-# Пользовательские данные
 user_models = {}
 user_personas = {}
 user_histories = {}
 all_users = set()
 
-# Админская статистика и логи
 stats = {
     "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "text_requests": 0,
@@ -63,7 +61,7 @@ stats = {
     "errors": 0,
     "max_tokens": 1500
 }
-recent_logs = []  # Хранит последние 15 событий
+recent_logs = []
 
 def add_log(user_id, action, details=""):
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -113,12 +111,20 @@ def is_admin(chat_id):
 
 @bot.message_handler(commands=['admin'])
 def cmd_admin(message):
-    if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ Доступ запрещен. Ты не админ.")
+    uid = message.chat.id
+    if ADMIN_ID == 0 or uid != ADMIN_ID:
+        bot.reply_to(
+            message,
+            f"⛔ Доступ запрещен!\n\n"
+            f"Твой реальный Telegram ID: `{uid}`\n"
+            f"В настройках Render сейчас: `{ADMIN_ID}`\n\n"
+            f"Вставь число `{uid}` в переменную ADMIN_ID на Render.",
+            parse_mode="Markdown"
+        )
         return
 
     text = (
-        "👑 **Панель Администратора**\n\n"
+        "👑 *Панель Администратора*\n\n"
         f"Всего пользователей: `{len(all_users)}`\n"
         f"Текущий max_tokens: `{stats['max_tokens']}`\n\n"
         "Выбери действие:"
@@ -127,7 +133,6 @@ def cmd_admin(message):
 
 @bot.message_handler(commands=['broadcast'])
 def cmd_broadcast(message):
-    """Рассылка сообщения всем пользователям: /broadcast текст"""
     if not is_admin(message.chat.id):
         return
 
@@ -139,7 +144,7 @@ def cmd_broadcast(message):
     count = 0
     for uid in list(all_users):
         try:
-            bot.send_message(uid, f"📢 **Объявление:**\n\n{msg_text}", parse_mode="Markdown")
+            bot.send_message(uid, f"📢 *Объявление:*\n\n{msg_text}", parse_mode="Markdown")
             count += 1
             time.sleep(0.05)
         except Exception:
@@ -157,7 +162,7 @@ def on_admin_click(call):
 
     if action == "adm_stats":
         text = (
-            "📊 **Статистика сервера:**\n\n"
+            "📊 *Статистика сервера:*\n\n"
             f"🚀 Запуск: `{stats['start_time']}`\n"
             f"👥 Уникальных юзеров: `{len(all_users)}`\n"
             f"💬 Текстовых запросов: `{stats['text_requests']}`\n"
@@ -173,7 +178,7 @@ def on_admin_click(call):
             log_text = "Логи пока пусты."
         else:
             log_text = "\n".join(recent_logs[-10:])
-        text = f"📜 **Последние 10 логов:**\n\n```text\n{log_text}\n```"
+        text = f"📜 *Последние 10 логов:*\n\n```text\n{log_text}\n```"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
                               reply_markup=build_admin_keyboard(), parse_mode="Markdown")
 
@@ -203,7 +208,7 @@ def on_token_change(call):
     bot.answer_callback_query(call.id, f"max_tokens установлен на {val}")
     cmd_admin(call.message)
 
-# ================= ОБЫЧНЫЕ КОМАНДЫ =================
+# ================= ПОЛЬЗОВАТЕЛЬСКИЕ КОМАНДЫ =================
 
 @bot.message_handler(commands=['model', 'models'])
 def cmd_model(message):
